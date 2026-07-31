@@ -27,7 +27,7 @@ export default async function VariantWorkbenchPage({
   return (
     <div>
       <Link
-        href="/variants"
+        href="/app/variants"
         className="text-sm font-medium text-signal-700 hover:underline"
       >
         ← Variants

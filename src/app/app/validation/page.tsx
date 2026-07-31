@@ -110,7 +110,7 @@ export default function ValidationPage() {
       {!loading && byVariant.size === 0 && (
         <p className="mt-6 text-sm text-slate-500">
           No variants in the pipeline yet. Promote one from the{" "}
-          <Link href="/" className="text-emerald-700 hover:underline">
+          <Link href="/app" className="text-emerald-700 hover:underline">
             variants screen
           </Link>
           .

@@ -32,8 +32,7 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isPublic =
-    pathname === "/landing" ||
-    pathname.startsWith("/landing/") ||
+    pathname === "/" || // landing page
     pathname.startsWith("/login") ||
     pathname.startsWith("/auth") ||
     pathname.startsWith("/api"); // API routes enforce auth themselves

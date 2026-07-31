@@ -109,7 +109,7 @@ function VariantsInner() {
     return (
       <p className="text-sm text-slate-500">
         No family selected.{" "}
-        <Link href="/" className="text-emerald-700 hover:underline">
+        <Link href="/app" className="text-emerald-700 hover:underline">
           Start over
         </Link>
         .
@@ -164,7 +164,7 @@ function VariantsInner() {
       {notice && (
         <p className="mt-4 rounded bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
           {notice}{" "}
-          <Link href="/validation" className="font-medium underline">
+          <Link href="/app/validation" className="font-medium underline">
             Go to validation tracker →
           </Link>
         </p>
@@ -205,10 +205,10 @@ function VariantsInner() {
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1.5">
                       <Link
-                        href={`/variants/${v.id}/structure`}
-                        className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                        href={`/app/variants/${v.id}/structure`}
+                        className="rounded border border-signal-500/30 bg-signal-500/10 px-2 py-1 text-xs font-medium text-signal-700 hover:bg-signal-500/20"
                       >
-                        Structure
+                        View 3D structure →
                       </Link>
                       <button
                         onClick={() => promote(v)}

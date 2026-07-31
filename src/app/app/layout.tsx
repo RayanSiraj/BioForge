@@ -4,10 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 // Product shell — the workflow chrome. Kept visually distinct from the
 // marketing surface: no marketing content ever renders here.
 const NAV = [
-  { href: "/", label: "Plastic" },
-  { href: "/families", label: "Families" },
-  { href: "/variants", label: "Variants" },
-  { href: "/validation", label: "Validation" },
+  { href: "/app", label: "Plastic" },
+  { href: "/app/families", label: "Families" },
+  { href: "/app/variants", label: "Variants" },
+  { href: "/app/validation", label: "Validation" },
 ];
 
 export default async function ProductLayout({
@@ -24,7 +24,7 @@ export default async function ProductLayout({
     <div className="min-h-dvh bg-slate-50">
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/app" className="flex items-center gap-2">
             <span className="font-display text-lg font-semibold tracking-tight text-slate-900">
               Bio<span className="text-signal-600">Forge</span>
             </span>
