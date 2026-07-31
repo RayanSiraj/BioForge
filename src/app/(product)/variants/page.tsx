@@ -6,9 +6,9 @@ import Link from "next/link";
 import type { Variant } from "@/lib/types";
 
 interface ScoringMeta {
-  usedMock: boolean;
   model: string;
-  note: string;
+  tier: string;
+  method: string;
 }
 
 function VariantsInner() {
@@ -155,15 +155,10 @@ function VariantsInner() {
       </div>
 
       {scoring && (
-        <p
-          className={`mt-4 rounded px-3 py-2 text-sm ${
-            scoring.usedMock
-              ? "bg-amber-50 text-amber-800"
-              : "bg-emerald-50 text-emerald-800"
-          }`}
-        >
-          <strong>{scoring.usedMock ? "Mock scoring" : "ESM-2"}</strong> ·{" "}
-          {scoring.model} — {scoring.note}
+        <p className="mt-4 rounded bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <strong>ESM-2 masked-marginal</strong> · {scoring.model} ({scoring.tier}{" "}
+          tier) — score is the summed log-likelihood ratio vs. wild-type; higher
+          is more favoured by the model.
         </p>
       )}
       {notice && (
@@ -208,13 +203,21 @@ function VariantsInner() {
                     {v.sequence.slice(0, 40)}…
                   </td>
                   <td className="px-3 py-2">
-                    <button
-                      onClick={() => promote(v)}
-                      disabled={promoting === v.id}
-                      className="rounded border border-emerald-300 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                    >
-                      {promoting === v.id ? "Promoting…" : "Promote"}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <Link
+                        href={`/variants/${v.id}/structure`}
+                        className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        Structure
+                      </Link>
+                      <button
+                        onClick={() => promote(v)}
+                        disabled={promoting === v.id}
+                        className="rounded border border-emerald-300 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                      >
+                        {promoting === v.id ? "Promoting…" : "Promote"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

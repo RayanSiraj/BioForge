@@ -16,6 +16,7 @@ export interface EnzymeFamily {
   reference_sequence: string;
   rationale: string | null;
   source_citation: string | null;
+  uniprot_id: string | null;
   created_at: string;
 }
 

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth";
 import { generateVariants } from "@/lib/variants";
-import { scoreVariants } from "@/lib/esm2";
+import { scoreVariants, EsmUnavailableError } from "@/lib/esm2";
 
 // POST /api/variants/generate
 // Body: { enzyme_family_id: string, count?: number, mutationsPerVariant?: number }
@@ -65,10 +65,29 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 2. Score via the isolated ESM-2 module.
-  const scoring = await scoreVariants(family.reference_sequence, sequences);
+  // 2. Score via the isolated ESM-2 module (real masked-marginal, triage tier).
+  //    No mock: if scoring is unavailable we fail loudly rather than fabricate.
+  let scoring;
+  try {
+    scoring = await scoreVariants(family.reference_sequence, sequences, {
+      tier: "triage",
+    });
+  } catch (err) {
+    const unavailable = err instanceof EsmUnavailableError;
+    return NextResponse.json(
+      {
+        error: unavailable
+          ? "ESM-2 scoring is unavailable — check HF_API_TOKEN and its inference permission."
+          : err instanceof Error
+            ? err.message
+            : "Scoring failed",
+        scoringUnavailable: unavailable,
+      },
+      { status: unavailable ? 503 : 502 },
+    );
+  }
 
-  // 3. Rank: highest score = rank 1.
+  // 3. Rank: highest masked-marginal score = rank 1.
   const ranked = [...scoring.scores].sort((a, b) => b.score - a.score);
   const rows = ranked.map((s, i) => ({
     enzyme_family_id: family.id,
@@ -90,9 +109,9 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     variants: inserted ?? [],
     scoring: {
-      usedMock: scoring.usedMock,
       model: scoring.model,
-      note: scoring.note,
+      tier: scoring.tier,
+      method: scoring.method,
     },
   });
 }

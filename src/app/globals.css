@@ -2,10 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light;
+/* Each route group sets its own background on its layout wrapper, so the base
+   body stays theme-neutral and the marketing (dark) and product (light) shells
+   never bleed into each other. */
+body {
+  @apply text-slate-900;
+  text-rendering: optimizeLegibility;
 }
 
-body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+/* Tabular figures for any metric/data readout. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Respect user motion preferences globally. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+::selection {
+  background: rgba(52, 229, 176, 0.28);
 }

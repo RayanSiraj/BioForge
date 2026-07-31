@@ -1,0 +1,637 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { StructureViewer, PLDDT_BANDS } from "@/components/StructureViewer";
+import { diffMutations } from "@/lib/structures";
+import { perResiduePlddt } from "@/lib/pdb";
+import { buildVerdict, type Verdict } from "@/lib/verdict";
+import type { MutationScore } from "@/lib/esm2";
+
+const AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY".split("");
+const clean = (s: string) => s.replace(/[^A-Za-z]/g, "").toUpperCase();
+
+interface FoldState {
+  status: "loading" | "ready" | "error" | "skipped";
+  pdb?: string;
+  meanPlddt?: number | null;
+  message?: string;
+  forSequence?: string; // which sequence this fold corresponds to
+}
+interface EsmState {
+  status: "idle" | "loading" | "ready" | "error";
+  score?: number;
+  mutations?: MutationScore[];
+  tier?: string;
+  message?: string;
+  forSequence?: string;
+}
+
+export function StructureWorkbench({
+  familyId,
+  parentSequence,
+  parentUniprot,
+  initialSequence,
+}: {
+  familyId: string;
+  parentSequence: string;
+  parentUniprot: string | null;
+  initialSequence: string;
+}) {
+  const parent = useMemo(() => clean(parentSequence), [parentSequence]);
+  const [working, setWorking] = useState(() => clean(initialSequence));
+
+  const [parentFold, setParentFold] = useState<FoldState>({
+    status: parentUniprot ? "loading" : "skipped",
+  });
+  const [variantFold, setVariantFold] = useState<FoldState>({
+    status: "loading",
+  });
+  const [esm, setEsm] = useState<EsmState>({ status: "idle" });
+
+  const mutations = useMemo(
+    () => diffMutations(parent, working),
+    [parent, working],
+  );
+
+  // --- Parent structure (once) ---
+  useEffect(() => {
+    if (!parentUniprot) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/structure/alphafold?uniprot=${encodeURIComponent(parentUniprot)}`,
+        );
+        const d = await r.json();
+        if (cancelled) return;
+        setParentFold(
+          r.ok
+            ? { status: "ready", pdb: d.pdb, meanPlddt: d.meanPlddt }
+            : { status: "error", message: d.error },
+        );
+      } catch (e) {
+        if (!cancelled) setParentFold({ status: "error", message: String(e) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [parentUniprot]);
+
+  // --- Fold a sequence with ESMFold (explicit) ---
+  const foldVariant = useCallback(async (seq: string) => {
+    setVariantFold({ status: "loading" });
+    try {
+      const r = await fetch("/api/structure/esmfold", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sequence: seq }),
+      });
+      const d = await r.json();
+      if (!r.ok) return setVariantFold({ status: "error", message: d.error });
+      setVariantFold({
+        status: "ready",
+        pdb: d.pdb,
+        meanPlddt: d.meanPlddt,
+        forSequence: seq,
+      });
+    } catch (e) {
+      setVariantFold({ status: "error", message: String(e) });
+    }
+  }, []);
+
+  // --- Score a sequence with ESM-2 ---
+  const scoreSeq = useCallback(
+    async (seq: string, tier: "triage" | "precise") => {
+      setEsm((s) => ({ ...s, status: "loading" }));
+      try {
+        const r = await fetch("/api/score", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ familyId, sequence: seq, tier }),
+        });
+        const d = await r.json();
+        if (!r.ok) return setEsm({ status: "error", message: d.error });
+        setEsm({
+          status: "ready",
+          score: d.score,
+          mutations: d.mutations,
+          tier: d.tier,
+          forSequence: seq,
+        });
+      } catch (e) {
+        setEsm({ status: "error", message: String(e) });
+      }
+    },
+    [familyId],
+  );
+
+  // Initial fold + score.
+  useEffect(() => {
+    foldVariant(clean(initialSequence));
+    scoreSeq(clean(initialSequence), "triage");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced live re-score whenever the working sequence changes.
+  const firstRun = useRef(true);
+  useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    const t = setTimeout(() => scoreSeq(working, "triage"), 600);
+    return () => clearTimeout(t);
+  }, [working, scoreSeq]);
+
+  // --- Editing helpers ---
+  const setResidue = (pos: number, residue: string) => {
+    setWorking((w) => {
+      const arr = w.split("");
+      arr[pos - 1] = residue;
+      return arr.join("");
+    });
+  };
+  const revert = (pos: number) => setResidue(pos, parent[pos - 1]);
+  const resetAll = () => setWorking(clean(initialSequence));
+
+  // --- Derived ---
+  const foldMatches =
+    variantFold.status === "ready" && variantFold.forSequence === working;
+  const esmMatches = esm.status === "ready" && esm.forSequence === working;
+
+  const plddtMap = useMemo(
+    () => (foldMatches && variantFold.pdb ? perResiduePlddt(variantFold.pdb) : null),
+    [foldMatches, variantFold.pdb],
+  );
+  const mutatedResiduePlddt = mutations.map((m) => ({
+    position: m.position,
+    plddt: plddtMap?.get(m.position) ?? null,
+  }));
+
+  const verdict: Verdict = buildVerdict({
+    esmScore: esmMatches ? (esm.score ?? null) : null,
+    mutations: esmMatches ? (esm.mutations ?? []) : [],
+    meanPlddt: foldMatches ? (variantFold.meanPlddt ?? null) : null,
+    mutatedResiduePlddt,
+  });
+
+  const highlight = mutations.map((m) => m.position);
+
+  return (
+    <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_360px]">
+      {/* Left: structures */}
+      <div className="space-y-4">
+        <div className="grid gap-4 xl:grid-cols-2">
+          <ViewerPanel
+            title="Parent"
+            subtitle={parentUniprot ? `AlphaFold · ${parentUniprot}` : "AlphaFold"}
+            fold={parentFold}
+            emptyLabel="No verified UniProt accession in AlphaFold DB for this family."
+          />
+          <ViewerPanel
+            title="Variant"
+            subtitle="ESMFold · on demand"
+            fold={variantFold}
+            highlight={highlight}
+            stale={variantFold.status === "ready" && !foldMatches}
+            onRefold={() => foldVariant(working)}
+          />
+        </div>
+        <PlddtLegend />
+        <VerdictPanel verdict={verdict} />
+      </div>
+
+      {/* Right: editor + scores + export */}
+      <div className="space-y-4">
+        <ScorePanel
+          esm={esm}
+          esmMatches={esmMatches}
+          onPrecise={() => scoreSeq(working, "precise")}
+        />
+        <MutationEditor
+          parent={parent}
+          working={working}
+          mutations={mutations}
+          esmMutations={esmMatches ? esm.mutations : undefined}
+          plddtMap={plddtMap}
+          onSetResidue={setResidue}
+          onRevert={revert}
+          onReset={resetAll}
+        />
+        <ExportButton
+          data={{
+            familyId,
+            parentUniprot,
+            parentSequence: parent,
+            sequence: working,
+            mutations,
+            esm: esmMatches ? esm : undefined,
+            variantMeanPlddt: foldMatches ? (variantFold.meanPlddt ?? null) : null,
+            verdict,
+          }}
+          variantPdb={foldMatches ? variantFold.pdb : undefined}
+          parentPdb={parentFold.status === "ready" ? parentFold.pdb : undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
+// --- Viewer panel ---------------------------------------------------------
+
+function ViewerPanel({
+  title,
+  subtitle,
+  fold,
+  highlight,
+  emptyLabel,
+  stale,
+  onRefold,
+}: {
+  title: string;
+  subtitle: string;
+  fold: FoldState;
+  highlight?: number[];
+  emptyLabel?: string;
+  stale?: boolean;
+  onRefold?: () => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
+        <div>
+          <h2 className="font-display text-sm font-semibold text-slate-900">
+            {title}
+          </h2>
+          <p className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+            {subtitle}
+          </p>
+        </div>
+        {fold.status === "ready" && fold.meanPlddt != null && (
+          <span className="tnum rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+            mean pLDDT {fold.meanPlddt}
+          </span>
+        )}
+      </div>
+      <div className="relative h-[300px] bg-slate-50">
+        {fold.status === "skipped" ? (
+          <Centered className="text-slate-400">{emptyLabel}</Centered>
+        ) : fold.status === "loading" ? (
+          <Centered>
+            <Pulse />
+            {title === "Variant" ? "Folding…" : "Loading…"}
+          </Centered>
+        ) : fold.status === "error" ? (
+          <Centered className="text-red-600">{fold.message}</Centered>
+        ) : (
+          <StructureViewer pdb={fold.pdb!} highlight={highlight} className="h-full w-full" />
+        )}
+        {stale && (
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-amber-50/95 px-3 py-2 text-xs text-amber-800">
+            Structure is out of date for the current edits.
+            <button
+              onClick={onRefold}
+              className="rounded bg-amber-600 px-2 py-1 font-medium text-white hover:bg-amber-700"
+            >
+              Re-fold
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- Score panel ----------------------------------------------------------
+
+function ScorePanel({
+  esm,
+  esmMatches,
+  onPrecise,
+}: {
+  esm: EsmState;
+  esmMatches: boolean;
+  onPrecise: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <p className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+          ESM-2 masked-marginal
+        </p>
+        {esm.status === "loading" && <Pulse />}
+      </div>
+      {esm.status === "error" ? (
+        <p className="mt-2 text-sm text-red-600">{esm.message}</p>
+      ) : esm.status === "ready" ? (
+        <>
+          <p className="mt-1 tnum font-display text-3xl font-semibold text-slate-900">
+            {esm.score! > 0 ? "+" : ""}
+            {esm.score!.toFixed(2)}
+            {!esmMatches && (
+              <span className="ml-2 align-middle text-xs font-normal text-amber-600">
+                recomputing…
+              </span>
+            )}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Σ log-likelihood ratio vs. wild-type · {esm.tier} tier. Higher is more
+            favoured by the model.
+          </p>
+          <button
+            onClick={onPrecise}
+            disabled={esm.status !== "ready"}
+            className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Run precise pass (ESM-2 650M)
+          </button>
+        </>
+      ) : (
+        <p className="mt-2 text-sm text-slate-400">Scoring…</p>
+      )}
+    </div>
+  );
+}
+
+// --- Mutation editor ------------------------------------------------------
+
+function MutationEditor({
+  parent,
+  working,
+  mutations,
+  esmMutations,
+  plddtMap,
+  onSetResidue,
+  onRevert,
+  onReset,
+}: {
+  parent: string;
+  working: string;
+  mutations: { position: number; from: string; to: string }[];
+  esmMutations?: MutationScore[];
+  plddtMap: Map<number, number> | null;
+  onSetResidue: (pos: number, residue: string) => void;
+  onRevert: (pos: number) => void;
+  onReset: () => void;
+}) {
+  const [addPos, setAddPos] = useState("");
+  const [addRes, setAddRes] = useState("A");
+  const deltaOf = (pos: number) =>
+    esmMutations?.find((m) => m.position === pos)?.delta;
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-sm font-semibold text-slate-900">
+          Residues ({mutations.length} mutation
+          {mutations.length === 1 ? "" : "s"})
+        </h2>
+        <button
+          onClick={onReset}
+          className="text-xs font-medium text-slate-500 hover:text-slate-800"
+        >
+          Reset
+        </button>
+      </div>
+
+      <div className="mt-3 space-y-1.5">
+        {mutations.length === 0 && (
+          <p className="text-sm text-slate-400">
+            Identical to parent. Add a mutation below.
+          </p>
+        )}
+        {mutations.map((m) => {
+          const delta = deltaOf(m.position);
+          const plddt = plddtMap?.get(m.position);
+          return (
+            <div
+              key={m.position}
+              className="flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5"
+            >
+              <span className="tnum font-mono text-xs font-medium text-[#B0246B]">
+                {m.from}
+                {m.position}
+              </span>
+              <select
+                value={m.to}
+                onChange={(e) => onSetResidue(m.position, e.target.value)}
+                className="rounded border border-slate-300 bg-white px-1.5 py-1 font-mono text-xs"
+                aria-label={`Residue at position ${m.position}`}
+              >
+                {AMINO_ACIDS.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+              <span className="ml-auto flex items-center gap-2 tnum font-mono text-[11px] text-slate-500">
+                {delta != null && (
+                  <span className={delta >= 0 ? "text-signal-700" : "text-slate-500"}>
+                    Δ{delta >= 0 ? "+" : ""}
+                    {delta.toFixed(2)}
+                  </span>
+                )}
+                {plddt != null && <span>pLDDT {plddt.toFixed(0)}</span>}
+              </span>
+              <button
+                onClick={() => onRevert(m.position)}
+                className="text-slate-400 hover:text-red-600"
+                aria-label={`Revert position ${m.position}`}
+                title="Revert to wild-type"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3">
+        <input
+          type="number"
+          min={1}
+          max={parent.length}
+          value={addPos}
+          onChange={(e) => setAddPos(e.target.value)}
+          placeholder="pos"
+          className="w-20 rounded border border-slate-300 px-2 py-1 text-xs"
+        />
+        <select
+          value={addRes}
+          onChange={(e) => setAddRes(e.target.value)}
+          className="rounded border border-slate-300 bg-white px-1.5 py-1 font-mono text-xs"
+        >
+          {AMINO_ACIDS.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => {
+            const p = parseInt(addPos, 10);
+            if (p >= 1 && p <= parent.length) onSetResidue(p, addRes);
+            setAddPos("");
+          }}
+          className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+        >
+          Set residue
+        </button>
+      </div>
+      <p className="mt-2 font-mono text-[10px] text-slate-400">
+        {working.length} aa · positions are 1-indexed on the parent sequence
+      </p>
+    </div>
+  );
+}
+
+// --- Verdict --------------------------------------------------------------
+
+const TONE_STYLE: Record<Verdict["tone"], { ring: string; dot: string; label: string }> = {
+  favorable: { ring: "border-signal-300 bg-signal-50", dot: "bg-signal-500", label: "text-signal-800" },
+  tolerated: { ring: "border-electron-400/40 bg-electron-400/10", dot: "bg-electron-500", label: "text-electron-500" },
+  risky: { ring: "border-amber-300 bg-amber-50", dot: "bg-amber-500", label: "text-amber-800" },
+  inconclusive: { ring: "border-slate-200 bg-slate-50", dot: "bg-slate-400", label: "text-slate-600" },
+};
+
+function VerdictPanel({ verdict }: { verdict: Verdict }) {
+  const s = TONE_STYLE[verdict.tone];
+  return (
+    <div className={`rounded-xl border p-5 ${s.ring}`}>
+      <div className="flex items-center gap-2">
+        <span className={`h-2 w-2 rounded-full ${s.dot}`} />
+        <span className={`font-mono text-[11px] uppercase tracking-wider ${s.label}`}>
+          Computational verdict
+        </span>
+      </div>
+      <h2 className="mt-2 font-display text-xl font-semibold text-slate-900">
+        {verdict.headline}
+      </h2>
+      <ul className="mt-3 space-y-1.5 text-sm text-slate-700">
+        {verdict.signals.map((sig, i) => (
+          <li key={i} className="flex gap-2">
+            <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
+            {sig}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-4 space-y-1 border-t border-slate-200/70 pt-3">
+        {verdict.caveats.map((c, i) => (
+          <p key={i} className="text-xs leading-relaxed text-slate-500">
+            {c}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- Export ---------------------------------------------------------------
+
+interface ExportData {
+  familyId: string;
+  parentUniprot: string | null;
+  parentSequence: string;
+  sequence: string;
+  mutations: { position: number; from: string; to: string }[];
+  esm?: EsmState;
+  variantMeanPlddt: number | null;
+  verdict: Verdict;
+}
+
+function ExportButton({
+  data,
+  variantPdb,
+  parentPdb,
+}: {
+  data: ExportData;
+  variantPdb?: string;
+  parentPdb?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+      zip.file("data.json", JSON.stringify(data, null, 2));
+      zip.file("report.md", buildReport(data));
+      zip.file("variant.fasta", `>variant\n${data.sequence}\n`);
+      if (variantPdb) zip.file("variant_esmfold.pdb", variantPdb);
+      if (parentPdb) zip.file("parent_alphafold.pdb", parentPdb);
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "bioforge-variant.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={run}
+      disabled={busy}
+      className="w-full rounded-xl bg-signal-600 px-4 py-3 text-sm font-medium text-white shadow-sm hover:bg-signal-700 disabled:opacity-50"
+    >
+      {busy ? "Packaging…" : "Export package (.zip)"}
+    </button>
+  );
+}
+
+function buildReport(data: ExportData): string {
+  const muts = data.mutations.map((m) => `${m.from}${m.position}${m.to}`).join(", ") || "none";
+  return [
+    "# BioForge variant report",
+    "",
+    `Mutations vs parent: ${muts}`,
+    `Length: ${data.sequence.length} aa`,
+    `ESM-2 mean pLDDT (variant): ${data.variantMeanPlddt ?? "n/a"}`,
+    "",
+    `## Verdict — ${data.verdict.headline}`,
+    ...data.verdict.signals.map((s) => `- ${s}`),
+    "",
+    "## Caveats",
+    ...data.verdict.caveats.map((c) => `- ${c}`),
+    "",
+    "Files: variant_esmfold.pdb (predicted structure), parent_alphafold.pdb, variant.fasta, data.json.",
+  ].join("\n");
+}
+
+// --- little shared bits ---------------------------------------------------
+
+function Centered({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`grid h-full place-items-center px-6 text-center text-sm text-slate-500 ${className}`}>
+      <span className="flex items-center gap-2">{children}</span>
+    </div>
+  );
+}
+function Pulse() {
+  return <span className="h-2 w-2 animate-pulse rounded-full bg-signal-500" />;
+}
+function PlddtLegend() {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <span className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+          pLDDT
+        </span>
+        {PLDDT_BANDS.map((b) => (
+          <span key={b.label} className="flex items-center gap-1.5 text-xs text-slate-600">
+            <span
+              className="h-3 w-3 rounded-sm"
+              style={{ backgroundColor: `#${b.color.toString(16).padStart(6, "0")}` }}
+            />
+            {b.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
