@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { Variant } from "@/lib/types";
+import { InSilicoBadge } from "@/components/InSilicoBadge";
 
 interface ScoringMeta {
   model: string;
@@ -187,7 +188,12 @@ function VariantsInner() {
             <thead className="bg-slate-100 text-left text-slate-600">
               <tr>
                 <th className="px-3 py-2">Rank</th>
-                <th className="px-3 py-2">ESM-2 score</th>
+                <th className="px-3 py-2">
+                  <div className="flex flex-col gap-0.5">
+                    <span>ESM-2 score</span>
+                    <InSilicoBadge />
+                  </div>
+                </th>
                 <th className="px-3 py-2">Sequence (preview)</th>
                 <th className="px-3 py-2"></th>
               </tr>

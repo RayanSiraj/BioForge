@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StructureViewer, PLDDT_BANDS } from "@/components/StructureViewer";
+import { InSilicoBadge, IN_SILICO_TOOLTIP } from "@/components/InSilicoBadge";
 import { diffMutations } from "@/lib/structures";
 import { perResiduePlddt } from "@/lib/pdb";
 import { buildVerdict, type Verdict } from "@/lib/verdict";
@@ -9,6 +10,8 @@ import type { MutationScore } from "@/lib/esm2";
 
 const AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY".split("");
 const clean = (s: string) => s.replace(/[^A-Za-z]/g, "").toUpperCase();
+// Stable empty reference so a null active-site set doesn't re-init the viewer.
+const NO_RESIDUES: number[] = [];
 
 interface FoldState {
   status: "loading" | "ready" | "error" | "skipped";
@@ -22,8 +25,21 @@ interface EsmState {
   score?: number;
   mutations?: MutationScore[];
   tier?: string;
+  runId?: string | null;
   message?: string;
   forSequence?: string;
+}
+interface StructuralState {
+  status: "idle" | "loading" | "ready" | "error";
+  forSequence?: string;
+  meanPlddt?: number | null;
+  activeSiteRmsd?: number | null;
+  activeSiteApplicable?: boolean;
+  activeSiteResidues?: number[] | null;
+  rmsdNote?: string | null;
+  lowConfidence?: boolean;
+  thresholds?: { plddtMin: number; rmsdMax: number };
+  message?: string;
 }
 
 export function StructureWorkbench({
@@ -47,6 +63,9 @@ export function StructureWorkbench({
     status: "loading",
   });
   const [esm, setEsm] = useState<EsmState>({ status: "idle" });
+  const [structural, setStructural] = useState<StructuralState>({
+    status: "idle",
+  });
 
   const mutations = useMemo(
     () => diffMutations(parent, working),
@@ -117,10 +136,55 @@ export function StructureWorkbench({
           score: d.score,
           mutations: d.mutations,
           tier: d.tier,
+          runId: d.runId ?? null,
           forSequence: seq,
         });
       } catch (e) {
         setEsm({ status: "error", message: String(e) });
+      }
+    },
+    [familyId],
+  );
+
+  // --- Structural self-consistency (ESMFold + active-site RMSD) ---
+  // Fires AFTER the stability score, with its own pending state; the score is
+  // never blocked on it. Reuses the variant fold when it's already available.
+  const runStructuralCheck = useCallback(
+    async (seq: string, runId: string | null, mutantPdb?: string) => {
+      setStructural({ status: "loading", forSequence: seq });
+      try {
+        const r = await fetch("/api/structural-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            familyId,
+            sequence: seq,
+            runId,
+            mutantPdb,
+            persistStructure: true,
+          }),
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          return setStructural({
+            status: "error",
+            forSequence: seq,
+            message: d.error,
+          });
+        }
+        setStructural({
+          status: "ready",
+          forSequence: seq,
+          meanPlddt: d.meanPlddt ?? null,
+          activeSiteRmsd: d.activeSiteRmsd ?? null,
+          activeSiteApplicable: d.activeSiteApplicable,
+          activeSiteResidues: d.activeSiteResidues ?? null,
+          rmsdNote: d.rmsdNote ?? null,
+          lowConfidence: d.lowConfidence,
+          thresholds: d.thresholds,
+        });
+      } catch (e) {
+        setStructural({ status: "error", forSequence: seq, message: String(e) });
       }
     },
     [familyId],
@@ -176,6 +240,33 @@ export function StructureWorkbench({
     mutatedResiduePlddt,
   });
 
+  // Kick off the structural check once the score is in and the variant fold has
+  // resolved (so we can reuse it). One check per distinct working sequence.
+  const structuralStartedFor = useRef<string | null>(null);
+  useEffect(() => {
+    const foldResolved =
+      variantFold.status === "ready" || variantFold.status === "error";
+    if (!esmMatches || !foldResolved) return;
+    if (mutations.length === 0) {
+      structuralStartedFor.current = working;
+      setStructural({ status: "idle", forSequence: working });
+      return;
+    }
+    if (structuralStartedFor.current === working) return;
+    structuralStartedFor.current = working;
+    const mutantPdb = foldMatches ? variantFold.pdb : undefined;
+    runStructuralCheck(working, esm.runId ?? null, mutantPdb);
+  }, [
+    esmMatches,
+    foldMatches,
+    variantFold,
+    mutations.length,
+    working,
+    esm.runId,
+    runStructuralCheck,
+  ]);
+
+  const structuralMatches = structural.forSequence === working;
   const highlight = mutations.map((m) => m.position);
 
   return (
@@ -194,6 +285,12 @@ export function StructureWorkbench({
             subtitle="ESMFold · on demand"
             fold={variantFold}
             highlight={highlight}
+            activeSite={structural.activeSiteResidues ?? NO_RESIDUES}
+            activeSiteLabel={
+              structural.activeSiteApplicable
+                ? "Ser134 · Asp180 · His211 (±2)"
+                : undefined
+            }
             stale={variantFold.status === "ready" && !foldMatches}
             onRefold={() => foldVariant(working)}
           />
@@ -209,6 +306,7 @@ export function StructureWorkbench({
           esmMatches={esmMatches}
           onPrecise={() => scoreSeq(working, "precise")}
         />
+        <StructuralPanel structural={structural} stale={!structuralMatches} />
         <MutationEditor
           parent={parent}
           working={working}
@@ -245,6 +343,8 @@ function ViewerPanel({
   subtitle,
   fold,
   highlight,
+  activeSite = [],
+  activeSiteLabel,
   emptyLabel,
   stale,
   onRefold,
@@ -253,10 +353,15 @@ function ViewerPanel({
   subtitle: string;
   fold: FoldState;
   highlight?: number[];
+  activeSite?: number[];
+  activeSiteLabel?: string;
   emptyLabel?: string;
   stale?: boolean;
   onRefold?: () => void;
 }) {
+  const [showActiveSite, setShowActiveSite] = useState(true);
+  const hasActiveSite = activeSite.length > 0 && fold.status === "ready";
+
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
@@ -268,11 +373,30 @@ function ViewerPanel({
             {subtitle}
           </p>
         </div>
-        {fold.status === "ready" && fold.meanPlddt != null && (
-          <span className="tnum rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
-            mean pLDDT {fold.meanPlddt}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {hasActiveSite && (
+            <label
+              className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-600"
+              title={activeSiteLabel}
+            >
+              <input
+                type="checkbox"
+                checked={showActiveSite}
+                onChange={(e) => setShowActiveSite(e.target.checked)}
+                className="h-3.5 w-3.5 accent-[#16a34a]"
+              />
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2.5 w-2.5 rounded-sm bg-[#16a34a]" />
+                Active site
+              </span>
+            </label>
+          )}
+          {fold.status === "ready" && fold.meanPlddt != null && (
+            <span className="tnum rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+              mean pLDDT {fold.meanPlddt}
+            </span>
+          )}
+        </div>
       </div>
       <div className="relative h-[300px] bg-slate-50">
         {fold.status === "skipped" ? (
@@ -285,7 +409,13 @@ function ViewerPanel({
         ) : fold.status === "error" ? (
           <Centered className="text-red-600">{fold.message}</Centered>
         ) : (
-          <StructureViewer pdb={fold.pdb!} highlight={highlight} className="h-full w-full" />
+          <StructureViewer
+            pdb={fold.pdb!}
+            highlight={highlight}
+            activeSite={activeSite}
+            showActiveSite={showActiveSite}
+            className="h-full w-full"
+          />
         )}
         {stale && (
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-amber-50/95 px-3 py-2 text-xs text-amber-800">
@@ -335,7 +465,10 @@ function ScorePanel({
               </span>
             )}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
+          <div className="mt-1.5">
+            <InSilicoBadge />
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">
             Σ log-likelihood ratio vs. wild-type · {esm.tier} tier. Higher is more
             favoured by the model.
           </p>
@@ -350,6 +483,125 @@ function ScorePanel({
       ) : (
         <p className="mt-2 text-sm text-slate-400">Scoring…</p>
       )}
+    </div>
+  );
+}
+
+// --- Structural self-consistency panel ------------------------------------
+
+function StructuralPanel({
+  structural: s,
+  stale,
+}: {
+  structural: StructuralState;
+  stale: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <p className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+          Structural self-consistency
+        </p>
+        {s.status === "loading" && <Pulse />}
+      </div>
+
+      {s.status === "loading" ? (
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 text-sm text-slate-500">
+          Folding mutant &amp; comparing…
+          <span className="text-slate-400">(ESMFold — slower)</span>
+        </p>
+      ) : s.status === "error" ? (
+        <p className="mt-2 text-sm text-red-600">{s.message}</p>
+      ) : s.status === "ready" ? (
+        <>
+          {s.lowConfidence && (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              Low structural confidence
+            </div>
+          )}
+          <dl className="mt-3 space-y-2.5">
+            <MetricRow
+              label="Structural confidence (pLDDT)"
+              value={s.meanPlddt != null ? s.meanPlddt.toFixed(1) : "—"}
+              flag={
+                s.meanPlddt != null && s.thresholds
+                  ? s.meanPlddt < s.thresholds.plddtMin
+                  : false
+              }
+            />
+            <MetricRow
+              label="Active-site consistency (RMSD to wild-type)"
+              value={
+                s.activeSiteApplicable
+                  ? s.activeSiteRmsd != null
+                    ? `${s.activeSiteRmsd.toFixed(3)} Å`
+                    : "—"
+                  : "N/A"
+              }
+              sub={
+                !s.activeSiteApplicable || s.activeSiteRmsd == null
+                  ? (s.rmsdNote ?? undefined)
+                  : undefined
+              }
+              flag={
+                s.activeSiteRmsd != null && s.thresholds
+                  ? s.activeSiteRmsd > s.thresholds.rmsdMax
+                  : false
+              }
+            />
+          </dl>
+          <div className="mt-3 flex items-center justify-between">
+            <InSilicoBadge />
+            {stale && (
+              <span className="text-xs text-amber-600">recomputing…</span>
+            )}
+          </div>
+          {s.thresholds && (
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+              Flagged when pLDDT &lt; {s.thresholds.plddtMin} or RMSD &gt;{" "}
+              {s.thresholds.rmsdMax} Å — candidates are shown regardless, not
+              hidden.
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="mt-2 text-sm text-slate-400">
+          Add a mutation to run the structural check against wild-type.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function MetricRow({
+  label,
+  value,
+  sub,
+  flag,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  flag?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-xs text-slate-500">{label}</dt>
+      <dd className="shrink-0 text-right">
+        <span
+          className={`tnum font-display text-lg font-semibold ${
+            flag ? "text-amber-700" : "text-slate-900"
+          }`}
+        >
+          {value}
+        </span>
+        {sub && (
+          <span className="mt-0.5 block max-w-[11rem] text-[10px] leading-tight text-slate-400">
+            {sub}
+          </span>
+        )}
+      </dd>
     </div>
   );
 }
@@ -382,11 +634,17 @@ function MutationEditor({
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="font-display text-sm font-semibold text-slate-900">
-          Residues ({mutations.length} mutation
-          {mutations.length === 1 ? "" : "s"})
-        </h2>
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="font-display text-sm font-semibold text-slate-900">
+            Residues ({mutations.length} mutation
+            {mutations.length === 1 ? "" : "s"})
+          </h2>
+          <p className="mt-0.5 text-[11px] text-slate-400">
+            Per-mutation Δ and pLDDT below are{" "}
+            <InSilicoBadge className="gap-0.5" />
+          </p>
+        </div>
         <button
           onClick={onReset}
           className="text-xs font-medium text-slate-500 hover:text-slate-800"
@@ -589,9 +847,11 @@ function buildReport(data: ExportData): string {
   return [
     "# BioForge variant report",
     "",
+    `> In silico prediction — ${IN_SILICO_TOOLTIP}`,
+    "",
     `Mutations vs parent: ${muts}`,
     `Length: ${data.sequence.length} aa`,
-    `ESM-2 mean pLDDT (variant): ${data.variantMeanPlddt ?? "n/a"}`,
+    `ESM-2 mean pLDDT (variant, predicted): ${data.variantMeanPlddt ?? "n/a"}`,
     "",
     `## Verdict — ${data.verdict.headline}`,
     ...data.verdict.signals.map((s) => `- ${s}`),
@@ -631,6 +891,7 @@ function PlddtLegend() {
             {b.label}
           </span>
         ))}
+        <InSilicoBadge className="ml-auto" />
       </div>
     </div>
   );

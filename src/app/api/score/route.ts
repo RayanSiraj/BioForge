@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth";
-import { scoreOneVariant, EsmUnavailableError, type EsmTier } from "@/lib/esm2";
+import { EsmUnavailableError, type EsmTier } from "@/lib/esm2";
+import { scoreOneVariantLogged } from "@/lib/mutationRuns";
 
 export const maxDuration = 60;
 
@@ -15,14 +16,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  let body: { familyId?: string; sequence?: string; tier?: EsmTier };
+  let body: {
+    familyId?: string;
+    sequence?: string;
+    tier?: EsmTier;
+    sweepId?: string;
+  };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { familyId, sequence, tier = "triage" } = body;
+  const { familyId, sequence, tier = "triage", sweepId } = body;
   if (!familyId || !sequence) {
     return NextResponse.json(
       { error: "familyId and sequence are required" },
@@ -42,10 +48,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Family not found" }, { status: 404 });
 
   try {
-    const result = await scoreOneVariant(family.reference_sequence, sequence, {
-      tier,
-    });
-    return NextResponse.json({ ...result, tier });
+    const { score, runId } = await scoreOneVariantLogged(
+      supabase,
+      user.id,
+      family.reference_sequence,
+      sequence,
+      { tier, sweepId },
+    );
+    return NextResponse.json({ ...score, tier, runId });
   } catch (err) {
     const unavailable = err instanceof EsmUnavailableError;
     return NextResponse.json(

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth";
 import { generateVariants } from "@/lib/variants";
-import { scoreVariants, EsmUnavailableError } from "@/lib/esm2";
+import { EsmUnavailableError } from "@/lib/esm2";
+import { scoreVariantsLogged } from "@/lib/mutationRuns";
 
 // POST /api/variants/generate
 // Body: { enzyme_family_id: string, count?: number, mutationsPerVariant?: number }
@@ -69,9 +70,13 @@ export async function POST(request: NextRequest) {
   //    No mock: if scoring is unavailable we fail loudly rather than fabricate.
   let scoring;
   try {
-    scoring = await scoreVariants(family.reference_sequence, sequences, {
-      tier: "triage",
-    });
+    scoring = await scoreVariantsLogged(
+      supabase,
+      user.id,
+      family.reference_sequence,
+      sequences,
+      { tier: "triage" },
+    );
   } catch (err) {
     const unavailable = err instanceof EsmUnavailableError;
     return NextResponse.json(

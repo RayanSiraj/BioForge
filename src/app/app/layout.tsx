@@ -8,6 +8,8 @@ const NAV = [
   { href: "/app/families", label: "Families" },
   { href: "/app/variants", label: "Variants" },
   { href: "/app/validation", label: "Validation" },
+  { href: "/app/sweep", label: "Sweep" },
+  { href: "/app/runs", label: "Runs" },
 ];
 
 export default async function ProductLayout({

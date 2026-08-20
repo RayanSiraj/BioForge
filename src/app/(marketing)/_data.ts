@@ -27,7 +27,7 @@ export const MILESTONES: Milestone[] = [
   {
     title: "ESM scoring pipeline",
     detail:
-      "Variant generation with ESM-1v triage and ESM-2 stability scoring via the HuggingFace Inference API.",
+      "Variant generation with ESM-1v triage and ESM-2 predicted-stability scoring via the HuggingFace Inference API.",
     status: "active",
   },
   {
@@ -39,7 +39,7 @@ export const MILESTONES: Milestone[] = [
   {
     title: "Confidence & export",
     detail:
-      "Per-residue pLDDT, stability readouts and a plain-language computational verdict, exportable as a single package.",
+      "Per-residue pLDDT, predicted-stability readouts and a plain-language computational verdict, exportable as a single package.",
     status: "planned",
   },
 ];

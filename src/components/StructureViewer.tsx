@@ -69,15 +69,22 @@ export interface StructureViewerProps {
   pdb: string;
   /** 1-indexed residue positions to emphasise (e.g. mutated residues). */
   highlight?: number[];
+  /** 1-indexed active-site residues to mark with a distinct overlay. */
+  activeSite?: number[];
+  /** Whether the active-site overlay is visible (toggled without a reload). */
+  showActiveSite?: boolean;
   className?: string;
 }
 
 export function StructureViewer({
   pdb,
   highlight = [],
+  activeSite = [],
+  showActiveSite = true,
   className = "",
 }: StructureViewerProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const activeSiteReprsRef = useRef<any[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -128,6 +135,30 @@ export function StructureViewer({
             aspectRatio: 1.6,
             radiusScale: 1.4,
           });
+        }
+
+        // Active-site overlay: a distinct translucent green marker so the
+        // catalytic region reads at a glance, independent of the pLDDT cartoon
+        // colours. Stored so it can be toggled without reloading the structure.
+        activeSiteReprsRef.current = [];
+        if (activeSite.length > 0) {
+          const sele = activeSite.map((p) => `${p}`).join(" or ");
+          // Translucent green envelope marks the pocket volume...
+          const blob = comp.addRepresentation("spacefill", {
+            sele,
+            color: 0x16a34a,
+            opacity: 0.5,
+            radiusScale: 1.05,
+          });
+          // ...opaque green side chains make it pop even against the cartoon.
+          const sticks = comp.addRepresentation("ball+stick", {
+            sele,
+            color: 0x15803d,
+            aspectRatio: 1.5,
+            radiusScale: 1.7,
+          });
+          activeSiteReprsRef.current = [blob, sticks];
+          for (const r of activeSiteReprsRef.current) r.setVisibility(showActiveSite);
         }
 
         // --- Hover tooltip: describe the residue under the cursor ----------
@@ -185,7 +216,7 @@ export function StructureViewer({
                 aa ? ` — ${escapeHtml(aa.role)}` : ""
               }</div>`,
               band !== null && b !== null
-                ? `<div style="margin-top:4px;color:#94a3b8">pLDDT ${b.toFixed(
+                ? `<div style="margin-top:4px;color:#94a3b8">Predicted pLDDT ${b.toFixed(
                     1,
                   )} · <span style="color:${band.color}">${escapeHtml(
                     band.label,
@@ -194,6 +225,7 @@ export function StructureViewer({
               isMut
                 ? `<div style="margin-top:4px;color:#f472b6;font-weight:600">● Mutation site</div>`
                 : "",
+              `<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.12);color:#94a3b8;font-size:10px">In silico prediction — not wet-lab confirmed</div>`,
             ].join("");
 
             // Show first so we can measure, then clamp within the host.
@@ -229,9 +261,24 @@ export function StructureViewer({
       window.removeEventListener("resize", onResize);
       moveCleanup?.();
       tooltipEl?.remove();
+      activeSiteReprsRef.current = [];
       stage?.dispose?.();
     };
-  }, [pdb, highlight]);
+    // showActiveSite is intentionally excluded — its changes are handled by the
+    // toggle effect below so the structure isn't reloaded on toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdb, highlight, activeSite]);
+
+  // Toggle the active-site overlay's visibility without reloading the structure.
+  useEffect(() => {
+    for (const r of activeSiteReprsRef.current) {
+      try {
+        r.setVisibility(showActiveSite);
+      } catch {
+        /* representation already disposed */
+      }
+    }
+  }, [showActiveSite]);
 
   return (
     <div className={`relative ${className}`}>
