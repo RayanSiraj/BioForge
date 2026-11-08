@@ -75,6 +75,16 @@ export async function fetchAlphaFold(
 
 // --- ESMFold variant structure ---------------------------------------------
 
+// Thrown when ESM Atlas (the free public ESMFold endpoint) times out or is
+// overloaded — a transient, retryable condition, distinct from a real fold
+// error. The route surfaces this as a "busy, try again" state.
+export class EsmfoldBusyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EsmfoldBusyError";
+  }
+}
+
 export async function foldWithEsmfold(
   sequence: string,
 ): Promise<StructureResult> {
@@ -89,29 +99,65 @@ export async function foldWithEsmfold(
     );
   }
 
-  const res = await fetch(ESMFOLD_API, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain" },
-    body: clean,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`ESMFold failed (HTTP ${res.status}): ${text.slice(0, 160)}`);
-  }
-  const raw = await res.text();
-  if (!raw.includes("ATOM")) {
-    throw new Error("ESMFold returned an unexpected (non-PDB) response.");
-  }
-  // ESM Atlas encodes pLDDT on a 0–1 scale in the B-factor column, whereas
-  // AlphaFold uses 0–100. Normalise to 0–100 so colouring and the mean match.
-  const pdb = rescalePlddtTo100(raw);
+  // ESM Atlas frequently times out under load (AWS gateway caps ~30s), so try a
+  // couple of times with a per-attempt abort before giving up. Timeouts / 5xx
+  // are retryable and ultimately surface as a transient EsmfoldBusyError; real
+  // errors (bad input, non-PDB) are thrown straight away.
+  const maxAttempts = 2;
+  let lastErr = "no response";
 
-  return {
-    pdb,
-    source: "esmfold",
-    meanPlddt: meanPlddtFromPdb(pdb),
-    meta: { residues: clean.length },
-  };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 32000);
+    let res: Response;
+    try {
+      res = await fetch(ESMFOLD_API, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: clean,
+        signal: controller.signal,
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      lastErr =
+        e instanceof Error && e.name === "AbortError"
+          ? "request timed out (~32s)"
+          : e instanceof Error
+            ? e.message
+            : "network error";
+      continue; // retryable
+    }
+    clearTimeout(timer);
+
+    if (res.ok) {
+      const raw = await res.text();
+      if (!raw.includes("ATOM")) {
+        throw new Error("ESMFold returned an unexpected (non-PDB) response.");
+      }
+      // ESM Atlas encodes pLDDT on a 0–1 scale in the B-factor column, whereas
+      // AlphaFold uses 0–100. Normalise so colouring and the mean match.
+      const pdb = rescalePlddtTo100(raw);
+      return {
+        pdb,
+        source: "esmfold",
+        meanPlddt: meanPlddtFromPdb(pdb),
+        meta: { residues: clean.length, attempts: attempt },
+      };
+    }
+
+    const text = await res.text().catch(() => "");
+    lastErr = `HTTP ${res.status}${text ? ": " + text.slice(0, 100) : ""}`;
+    // 4xx is a real error (e.g. bad sequence) — don't retry.
+    if (res.status < 500 && res.status !== 429) {
+      throw new Error(`ESMFold failed (${lastErr}).`);
+    }
+    // 5xx / 504 / 429 → retry
+  }
+
+  throw new EsmfoldBusyError(
+    `ESMFold (ESM Atlas) is busy — ${lastErr}. This free folding service often ` +
+      `times out on longer sequences; please try again in a moment.`,
+  );
 }
 
 // If the per-atom B-factors look like a 0–1 fraction, rescale every atom's

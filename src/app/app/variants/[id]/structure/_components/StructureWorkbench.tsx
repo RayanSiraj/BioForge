@@ -18,6 +18,7 @@ interface FoldState {
   pdb?: string;
   meanPlddt?: number | null;
   message?: string;
+  busy?: boolean; // transient (ESMFold service timed out) — retryable
   forSequence?: string; // which sequence this fold corresponds to
 }
 interface EsmState {
@@ -107,7 +108,12 @@ export function StructureWorkbench({
         body: JSON.stringify({ sequence: seq }),
       });
       const d = await r.json();
-      if (!r.ok) return setVariantFold({ status: "error", message: d.error });
+      if (!r.ok)
+        return setVariantFold({
+          status: "error",
+          message: d.error,
+          busy: d.busy,
+        });
       setVariantFold({
         status: "ready",
         pdb: d.pdb,
@@ -407,7 +413,19 @@ function ViewerPanel({
             {title === "Variant" ? "Folding…" : "Loading…"}
           </Centered>
         ) : fold.status === "error" ? (
-          <Centered className="text-red-600">{fold.message}</Centered>
+          <div className="grid h-full place-items-center gap-3 px-6 text-center">
+            <p className={`text-sm ${fold.busy ? "text-amber-700" : "text-red-600"}`}>
+              {fold.message}
+            </p>
+            {onRefold && (
+              <button
+                onClick={onRefold}
+                className="rounded-md bg-signal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-signal-700"
+              >
+                Try fold again
+              </button>
+            )}
+          </div>
         ) : (
           <StructureViewer
             pdb={fold.pdb!}

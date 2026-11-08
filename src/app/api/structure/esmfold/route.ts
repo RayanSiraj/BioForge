@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { foldWithEsmfold } from "@/lib/structures";
+import { foldWithEsmfold, EsmfoldBusyError } from "@/lib/structures";
 
 // Folding can take tens of seconds; give it room.
 export const maxDuration = 120;
@@ -26,9 +26,13 @@ export async function POST(request: NextRequest) {
     const result = await foldWithEsmfold(body.sequence);
     return NextResponse.json(result);
   } catch (err) {
+    const busy = err instanceof EsmfoldBusyError;
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "ESMFold failed" },
-      { status: 502 },
+      {
+        error: err instanceof Error ? err.message : "ESMFold failed",
+        busy, // transient — the client can offer a retry
+      },
+      { status: busy ? 503 : 502 },
     );
   }
 }
