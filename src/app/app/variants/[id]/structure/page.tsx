@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { StructureWorkbench } from "./_components/StructureWorkbench";
 
 export default async function VariantWorkbenchPage({
@@ -8,7 +8,7 @@ export default async function VariantWorkbenchPage({
 }: {
   params: { id: string };
 }) {
-  const supabase = createClient();
+  const supabase = createAdminClient();
   const { data: variant, error } = await supabase
     .from("variants")
     .select(

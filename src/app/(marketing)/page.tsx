@@ -74,7 +74,7 @@ export default function LandingPage() {
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <Link
-                href="/login"
+                href="/app"
                 className="group inline-flex items-center gap-2 rounded-xl bg-signal-500 px-5 py-3 font-medium text-ink-950 shadow-glow transition-transform hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-400"
               >
                 Open the console
@@ -303,7 +303,7 @@ export default function LandingPage() {
               first variant.
             </p>
             <Link
-              href="/login"
+              href="/app"
               className="mt-8 inline-flex items-center gap-2 rounded-xl bg-signal-500 px-6 py-3 font-medium text-ink-950 shadow-glow transition-transform hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-400"
             >
               Open the console

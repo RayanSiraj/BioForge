@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUser } from "@/lib/auth";
 import { fetchAlphaFold } from "@/lib/structures";
 
 export const maxDuration = 60;
 
 // GET /api/structure/alphafold?uniprot=<accession>
 // Returns the precomputed AlphaFold structure for a reference enzyme.
+// Open app: no auth required (external API, no DB).
 export async function GET(request: NextRequest) {
-  const user = await getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
   const uniprot = request.nextUrl.searchParams.get("uniprot");
   if (!uniprot) {
     return NextResponse.json(

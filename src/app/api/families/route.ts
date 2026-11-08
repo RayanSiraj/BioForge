@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth";
 
 // GET /api/families — list enzyme families for the Sweep parent selector.
@@ -11,7 +11,7 @@ export async function GET() {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const supabase = createClient();
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("enzyme_families")
     .select("id, name, uniprot_id, reference_sequence")

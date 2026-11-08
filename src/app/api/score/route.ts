@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth";
 import { EsmUnavailableError, type EsmTier } from "@/lib/esm2";
 import { scoreOneVariantLogged } from "@/lib/mutationRuns";
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = createClient();
+  const supabase = createAdminClient();
   const { data: family, error } = await supabase
     .from("enzyme_families")
     .select("reference_sequence")
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
   try {
     const { score, runId } = await scoreOneVariantLogged(
       supabase,
-      user.id,
+      null, // anonymous session (open app) — mutation_runs.user_id nullable
       family.reference_sequence,
       sequence,
       { tier, sweepId },

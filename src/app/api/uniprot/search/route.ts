@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUser } from "@/lib/auth";
 import { searchDegradingEnzymes } from "@/lib/uniprot";
 
 // GET /api/uniprot/search?plastic=<name>
 // Live UniProtKB search for enzyme candidates associated with a plastic.
+// Open app: no auth required (external API, no DB).
 export async function GET(request: NextRequest) {
-  const user = await getUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
   const plastic = request.nextUrl.searchParams.get("plastic");
   if (!plastic) {
     return NextResponse.json(

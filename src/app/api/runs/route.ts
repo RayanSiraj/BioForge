@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth";
 
 // GET /api/runs — paginated, sortable, filterable list of mutation_runs.
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   const from = sp.get("from")?.trim();
   const to = sp.get("to")?.trim();
 
-  const supabase = createClient();
+  const supabase = createAdminClient();
 
   let q = supabase.from("mutation_runs").select("*", { count: "exact" });
   if (model) q = q.eq("model_name", model);

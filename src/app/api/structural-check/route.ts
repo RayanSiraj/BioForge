@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth";
 import { foldWithEsmfold } from "@/lib/structures";
 import { perResiduePlddt } from "@/lib/pdb";
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = createClient();
+  const supabase = createAdminClient();
   const { data: family, error } = await supabase
     .from("enzyme_families")
     .select("reference_sequence, uniprot_id, name")

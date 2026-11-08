@@ -42,7 +42,7 @@ export default function MarketingLayout({
           </nav>
           <div className="flex items-center gap-2">
             <Link
-              href="/login"
+              href="/app"
               className="rounded-lg border border-white/10 px-3.5 py-2 text-sm font-medium text-slate-200 transition-colors hover:border-white/25 hover:bg-white/5"
             >
               Open console

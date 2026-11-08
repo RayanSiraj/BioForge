@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { getUser } from "@/lib/auth";
 import type { ValidationStatus, ValidationTier } from "@/lib/types";
 
@@ -10,7 +10,7 @@ const VALID_STATUS: ValidationStatus[] = ["pending", "passed", "failed"];
 // Lists validation records, optionally filtered to one variant.
 export async function GET(request: NextRequest) {
   const variant = request.nextUrl.searchParams.get("variant");
-  const supabase = createClient();
+  const supabase = createAdminClient();
 
   let query = supabase
     .from("validation_records")
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = createClient();
+  const supabase = createAdminClient();
   const { data: record, error } = await supabase
     .from("validation_records")
     .upsert(
@@ -128,7 +128,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const supabase = createClient();
+  const supabase = createAdminClient();
   const { data: record, error } = await supabase
     .from("validation_records")
     .update(update)
