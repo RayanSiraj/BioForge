@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Reveal } from "../_components/Reveal";
+import { InView as Reveal } from "../_components/motion";
 
 export const metadata: Metadata = {
   title: "How BioForge works — Method",

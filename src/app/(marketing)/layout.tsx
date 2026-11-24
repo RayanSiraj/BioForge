@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ScrollProgress } from "./_components/motion";
 
 export const metadata: Metadata = {
   title: "BioForge — Computational enzyme engineering for plastics",
@@ -21,6 +22,7 @@ export default function MarketingLayout({
 }) {
   return (
     <div className="min-h-dvh bg-ink-950 text-slate-200 selection:bg-signal-400/30">
+      <ScrollProgress />
       <header className="sticky top-0 z-40 border-b border-white/5 bg-ink-950/70 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
           <Link href="/" className="flex items-center gap-2.5">
