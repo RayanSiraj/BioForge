@@ -8,10 +8,10 @@ export const metadata: Metadata = {
 };
 
 const NAV = [
-  { href: "#pipeline", label: "Pipeline" },
-  { href: "#progress", label: "Progress" },
-  { href: "#validation", label: "Validation" },
-  { href: "#programs", label: "Programs" },
+  { href: "/#pipeline", label: "Pipeline" },
+  { href: "/methods", label: "Method" },
+  { href: "/#validation", label: "Validation" },
+  { href: "/#programs", label: "Programs" },
 ];
 
 export default function MarketingLayout({
