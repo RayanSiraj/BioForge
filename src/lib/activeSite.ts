@@ -42,6 +42,63 @@ export function activeSiteResiduesFor(
   return uniprotId === PETASE_UNIPROT ? petaseActiveSiteResidues() : null;
 }
 
+// --- Catalytic residues (for mutation warnings) -----------------------------
+// The nucleophilic serine sits in the conserved G-x-S-x-G "nucleophile elbow",
+// so it can be located unambiguously from the stored sequence. Mutating it
+// almost always abolishes catalysis. The full Ser–Asp–His triad is only
+// asserted where verified (PETase). Positions index the STORED reference
+// sequence (what the app folds/scores), 1-indexed.
+
+export interface CatalyticSite {
+  /** Catalytic nucleophile serine (G-x-S-x-G elbow). */
+  nucleophileSer: number;
+  /** Full Ser–Asp–His triad, where verified. */
+  triad?: { ser: number; asp: number; his: number };
+  note: string;
+}
+
+const CATALYTIC: Record<string, CatalyticSite> = {
+  // Ideonella sakaiensis PETase — verified triad (mature 264-aa numbering).
+  A0A0K8P6T7: {
+    nucleophileSer: 134,
+    triad: { ser: 134, asp: 180, his: 211 },
+    note: "Ser134 · Asp180 · His211 — catalytic triad (G-W-S-M-G nucleophile elbow)",
+  },
+  // Leaf-branch compost cutinase (LCC) — nucleophile verified from G-H-S-M-G.
+  G9BY57: {
+    nucleophileSer: 165,
+    note: "Ser165 — catalytic nucleophile (G-H-S-M-G elbow)",
+  },
+  // Thermobifida fusca cutinase — nucleophile verified from G-H-S-M-G.
+  Q47RJ6: {
+    nucleophileSer: 170,
+    note: "Ser170 — catalytic nucleophile (G-H-S-M-G elbow)",
+  },
+};
+
+export function catalyticSiteFor(
+  uniprotId: string | null | undefined,
+): CatalyticSite | null {
+  return uniprotId ? (CATALYTIC[uniprotId] ?? null) : null;
+}
+
+export type ResidueRole = "catalytic" | "active-site" | "other";
+
+/** Classify a 1-indexed position relative to a family's catalytic residues. */
+export function classifyResidue(
+  uniprotId: string | null | undefined,
+  position: number,
+): ResidueRole {
+  const site = catalyticSiteFor(uniprotId);
+  if (!site) return "other";
+  const centers = site.triad
+    ? [site.triad.ser, site.triad.asp, site.triad.his]
+    : [site.nucleophileSer];
+  if (centers.includes(position)) return "catalytic";
+  if (centers.some((c) => Math.abs(c - position) <= 2)) return "active-site";
+  return "other";
+}
+
 // --- Confidence thresholds --------------------------------------------------
 
 /** pLDDT below this is flagged "low structural confidence". */

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StructureViewer, PLDDT_BANDS } from "@/components/StructureViewer";
 import { InSilicoBadge, IN_SILICO_TOOLTIP } from "@/components/InSilicoBadge";
 import { diffMutations } from "@/lib/structures";
+import { classifyResidue, catalyticSiteFor } from "@/lib/activeSite";
 import { perResiduePlddt } from "@/lib/pdb";
 import { buildVerdict, type Verdict } from "@/lib/verdict";
 import type { MutationScore } from "@/lib/esm2";
@@ -319,6 +320,7 @@ export function StructureWorkbench({
           mutations={mutations}
           esmMutations={esmMatches ? esm.mutations : undefined}
           plddtMap={plddtMap}
+          parentUniprot={parentUniprot}
           onSetResidue={setResidue}
           onRevert={revert}
           onReset={resetAll}
@@ -632,6 +634,7 @@ function MutationEditor({
   mutations,
   esmMutations,
   plddtMap,
+  parentUniprot,
   onSetResidue,
   onRevert,
   onReset,
@@ -641,6 +644,7 @@ function MutationEditor({
   mutations: { position: number; from: string; to: string }[];
   esmMutations?: MutationScore[];
   plddtMap: Map<number, number> | null;
+  parentUniprot: string | null;
   onSetResidue: (pos: number, residue: string) => void;
   onRevert: (pos: number) => void;
   onReset: () => void;
@@ -649,6 +653,12 @@ function MutationEditor({
   const [addRes, setAddRes] = useState("A");
   const deltaOf = (pos: number) =>
     esmMutations?.find((m) => m.position === pos)?.delta;
+
+  // Catalytic-residue warnings (verified positions only; see lib/activeSite).
+  const catSite = catalyticSiteFor(parentUniprot);
+  const catalyticHits = mutations.filter(
+    (m) => classifyResidue(parentUniprot, m.position) === "catalytic",
+  );
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -671,6 +681,18 @@ function MutationEditor({
         </button>
       </div>
 
+      {catalyticHits.length > 0 && (
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <span className="font-semibold">⚠ Catalytic residue mutated.</span>{" "}
+          {catalyticHits.map((m) => `${m.from}${m.position}${m.to}`).join(", ")} —
+          altering the catalytic machinery is expected to{" "}
+          <strong>abolish activity</strong>, regardless of fold confidence.
+          {catSite && (
+            <span className="mt-1 block text-red-500">{catSite.note}</span>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 space-y-1.5">
         {mutations.length === 0 && (
           <p className="text-sm text-slate-400">
@@ -680,15 +702,38 @@ function MutationEditor({
         {mutations.map((m) => {
           const delta = deltaOf(m.position);
           const plddt = plddtMap?.get(m.position);
+          const role = classifyResidue(parentUniprot, m.position);
           return (
             <div
               key={m.position}
-              className="flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5"
+              className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 ${
+                role === "catalytic"
+                  ? "bg-red-50 ring-1 ring-red-200"
+                  : role === "active-site"
+                    ? "bg-amber-50 ring-1 ring-amber-200"
+                    : "bg-slate-50"
+              }`}
             >
               <span className="tnum font-mono text-xs font-medium text-[#B0246B]">
                 {m.from}
                 {m.position}
               </span>
+              {role !== "other" && (
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                    role === "catalytic"
+                      ? "bg-red-600 text-white"
+                      : "bg-amber-500 text-white"
+                  }`}
+                  title={
+                    role === "catalytic"
+                      ? "Catalytic residue — mutation likely abolishes activity"
+                      : "Active-site region — mutation may impair activity"
+                  }
+                >
+                  {role === "catalytic" ? "catalytic" : "active site"}
+                </span>
+              )}
               <select
                 value={m.to}
                 onChange={(e) => onSetResidue(m.position, e.target.value)}
